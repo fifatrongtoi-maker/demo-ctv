@@ -1,0 +1,31 @@
+		SELECT 
+		*
+		FROM (
+		SELECT
+		    MAPPHONE.VALUE,
+		    deal.CURRENT_STAGE_ID,
+		    camp.CAMP_LEVEL2,
+		    detail_deal.UF_CRM_STUDENT_CLASS,
+		    TRUNC(deal.DATE_CREATE) date_create,
+		    deal.contact_id,
+		    row_number() over(PARTITION BY value ORDER BY deal.DATE_CREATE desc) rnk
+		FROM ODS_DA.BOD_FACT_CRM_DEAL deal
+		LEFT JOIN ods_da.BOD_DIM_CAMPAIGNS camp ON deal.UF_CRM_CAMPAIGN_CODE = camp.ID
+		LEFT JOIN BITRIX24.B_CRM_FIELD_MULTI MAPPHONE 
+		    ON deal.CONTACT_ID = MAPPHONE.ELEMENT_ID 
+		    AND MAPPHONE.ENTITY_ID = 'CONTACT'
+		    AND MAPPHONE.TYPE_ID = 'PHONE'
+		LEFT JOIN BITRIX24.B_CRM_DEAL deal2 ON deal.id = deal2.ID
+		LEFT JOIN BITRIX24.B_UTS_CRM_DEAL detail_deal ON deal.ID = DETAIL_DEAL.VALUE_ID
+		WHERE camp.CAMP_LEVEL2 IN (' 1.1 Tutor - Bán mới từ phễu',
+		' 1.2 Tutor - Bán luôn GG + SEO',
+		' 1.3 Tutor - Bán mới tối ưu',
+		' 1.4 Tutor - Bán luôn FB',
+		' 1.5 Tutor - Micro',
+		' 1.6 Tutor - Referral',
+		' 1.7 Tutor - MGM Giáo viên',
+		' 1.8 DA mua SL tặng Tutor',
+		' 3 Kênh trường lấy số Tutor')
+		AND (LOWER(CURRENT_STAGE_ID) LIKE '%lose%' OR LOWER(CURRENT_STAGE_ID) LIKE '%apology%')
+		) 
+	WHERE rnk = 1
