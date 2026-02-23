@@ -1,0 +1,32 @@
+SELECT
+    crm_order.phone,
+    CASE
+        WHEN SUM(CASE WHEN crm_pack2.NEW_PRODUCT_PACKAGE LIKE '%Babilala%' THEN 1 ELSE 0 END) > 0
+         AND SUM(CASE WHEN crm_pack2.NEW_PRODUCT_PACKAGE LIKE '%Edupia%' THEN 1 ELSE 0 END) > 0
+            THEN 'Combo'
+
+        WHEN SUM(CASE WHEN crm_pack2.NEW_PRODUCT_PACKAGE LIKE '%Babilala%' THEN 1 ELSE 0 END) > 0
+            THEN 'Babilala'
+
+        WHEN SUM(CASE WHEN crm_pack2.NEW_PRODUCT_PACKAGE LIKE '%Edupia%' THEN 1 ELSE 0 END) > 0
+            THEN 'Edupia'
+
+        WHEN SUM(CASE WHEN crm_pack2.NEW_PRODUCT_PACKAGE LIKE '%Tutor%' THEN 1 ELSE 0 END) > 0
+            THEN 'Tutor'
+
+        WHEN SUM(CASE WHEN crm_pack2.NEW_PRODUCT_PACKAGE LIKE '%VAS%' THEN 1 ELSE 0 END) > 0
+            THEN 'VAS'
+
+        WHEN SUM(CASE WHEN crm_pack2.NEW_PRODUCT_PACKAGE LIKE '%IELTS%' THEN 1 ELSE 0 END) > 0
+            THEN 'IELTS'
+
+        ELSE 'Other'
+    END AS KQ
+FROM EDUCA_CRM.crm_order crm_order 
+LEFT JOIN EDUCA_CRM.CRM_PACKAGE crm_pack 
+    ON crm_order.package_id = crm_pack.id
+LEFT JOIN ods_da.BOD_DIM_PACKAGE crm_pack2 
+    ON crm_pack.id = crm_pack2.id
+WHERE crm_order.price > 0
+  AND status = 1
+GROUP BY crm_order.phone
