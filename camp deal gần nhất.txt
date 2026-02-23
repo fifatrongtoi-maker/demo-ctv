@@ -1,0 +1,31 @@
+		SELECT *
+		FROM (
+		SELECT
+			value,
+			CAMP_LEVEL2,
+			month_date,
+			name,
+	ROW_NUMBER () over(PARTITION BY vALUE ORDER BY month_Date desc) rnk
+		FROM (
+		SELECT
+		    MAPPHONE.VALUE,
+		    camp.CAMP_LEVEL2,
+		    camp.CAMP_LEVEL0,
+		    TRUNC(deal.DATE_CREATE,'MM') month_date,
+		    b.name
+		FROM ODS_DA.BOD_FACT_CRM_DEAL deal
+		LEFT JOIN ods_da.BOD_DIM_CAMPAIGNS camp ON deal.UF_CRM_CAMPAIGN_CODE = camp.ID
+		LEFT JOIN bitrix24.B_CRM_DEAL_STAGE_HISTORY deal_history ON deal.id = deal_history.owner_id
+		LEFT JOIN BITRIX24.B_CRM_FIELD_MULTI MAPPHONE 
+		    ON deal.CONTACT_ID = MAPPHONE.ELEMENT_ID 
+		    AND MAPPHONE.ENTITY_ID = 'CONTACT'
+		    AND MAPPHONE.TYPE_ID = 'PHONE'
+		LEFT JOIN BITRIX24.B_CRM_STATUS b ON b.STATUS_ID  = deal_history.STAGE_ID									and DEAL.CATEGORY_ID = b.CATEGORY_ID 
+		WHERE TRUNC(deal_history.CREATED_TIME ) >= date'2025-01-01'
+		AND b.SORT >= 20 
+		AND b.SORT <= 90	
+		and CAMP_LEVEL0 <> 'UNICLASS'
+		AND TRUNC(deal.DATE_CREATE) >= date'2024-01-01' 
+		)
+		)
+		WHERE rnk = 1
