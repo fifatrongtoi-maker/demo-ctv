@@ -1,0 +1,20 @@
+    SELECT *
+    FROM (
+    SELECT 
+        t2.VALUE, 
+        STATUS_ID,
+        trunc(b.DATE_CREATE) date_create,
+        camp.CAMP_Level2,
+        ROW_NUMBER () over(PARTITION BY t2.value ORDER BY trunc(b.DATE_CREATE) DESC) rnk
+    FROM BITRIX24.B_CRM_LEAD b
+    INNER JOIN BITRIX24.B_UTS_CRM_LEAD t1 ON b.ID = t1.VALUE_ID
+    INNER JOIN BITRIX24.B_CRM_FIELD_MULTI t2 ON b.ID = t2.ELEMENT_ID 
+    INNER JOIN ODS_DA.BOD_DIM_CAMPAIGNS camp ON t1.UF_CAMPAIGN_CODE = camp.ID
+    WHERE camp.CAMP_LEVEL0 = 'UNICLASS'
+      AND t2.ENTITY_ID = 'LEAD' 
+      AND t2.TYPE_ID = 'PHONE'
+      AND STATUS_ID ='CONVERTED'
+      AND camp.CAMP_LEVEL2 =' 1.3 Uniclass - DEMO CTV'
+      )
+      WHERE rnk = 1
+      AND date_create >= ADD_MONTHS(sysdate,-6)
