@@ -1,0 +1,28 @@
+WITH tutor_order AS (
+  SELECT 
+    orders.id,
+    orders.ORDER_DATE,
+    PACKS.NAME,
+    orders.PHONE 
+  FROM EDUCA_CRM.CRM_ORDER orders
+  LEFT JOIN EDUCA_CRM.CRM_PACKAGE packs ON orders.PACKAGE_ID = packs.ID
+  WHERE LOWER(packs.NAME) LIKE '%tutor%'
+)
+  SELECT PHONE
+  FROM (
+    SELECT 
+      PHONE
+    FROM tutor_order 
+    )
+      UNION ALL
+  SELECT phone
+  FROM EDUCA_CRM.CRM_ORDER orders
+  LEFT JOIN EDUCA_CRM.CRM_PACKAGE packs ON orders.PACKAGE_ID = packs.ID
+  WHERE (LOWER(packs.NAME) LIKE '%uniclass%'
+  OR LOWER(packs.NAME) LIKE '%edupia class%' 
+  OR LOWER(packs.NAME) LIKE '%edupiaclass%')
+  UNION 
+  SELECT phone
+  FROM EDUCA_CRM.CRM_ORDER orders
+  LEFT JOIN EDUCA_CRM.CRM_PACKAGE packs ON orders.PACKAGE_ID = packs.ID
+  WHERE (LOWER(packs.NAME) LIKE '%aiclass%')
