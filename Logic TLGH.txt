@@ -1,0 +1,239 @@
+/* 
+  1) LICENSE_AGG: gom license theo PROFILE_ID để lấy END_TIME lớn nhất (license paid cuối cùng).
+     - END_TIME trong bảng license đang là millisecond (ms) nên đặt alias END_TIME_MS.
+*/
+WITH LICENSE_AGG AS (
+    SELECT
+        PROFILE_ID,
+        MAX(END_TIME) AS END_TIME_MS   -- END_TIME paid cuối cùng (ms)
+    FROM ODS_STAGING.EDUCA_K12_FLAT_K12_LICENSE
+    WHERE IS_PAID = 1                 -- chỉ lấy license đã thanh toán
+    GROUP BY PROFILE_ID
+)
+
+/*
+  2) ac: tập dữ liệu chi tiết từng order/code/package của profile
+     - Join profile -> active_code (code đã mua) -> crm_order (đơn hàng) -> account_package (all_code)
+     - Join thêm package dimension để lấy thông tin gói
+     - Join LICENSE_AGG để lấy LAST_END_TIME (ngày hết hạn cuối cùng theo license)
+     - row_number để chọn bản ghi mới nhất theo (profile_id, package_id)
+*/
+, ac AS (
+SELECT *
+FROM (
+    SELECT DISTINCT
+        crm_order.ID              AS ORDER_ID,
+        k12_profile.ID            AS PROFILE_ID,
+        active_code.PHONE,
+        active_code.code,
+        crm_order.ORDER_DATE,
+        all_code.START_TIME,
+        all_code.END_TIME,
+
+        /* 
+          LAST_END_TIME: chuyển END_TIME_MS (ms từ epoch) sang dạng DATE
+          - END_TIME_MS / 1000 -> seconds
+          - /86400 -> days
+          - cộng vào DATE '1970-01-01'
+        */
+        DATE '1970-01-01'
+            + (license.END_TIME_MS / 1000) / 86400 AS LAST_END_TIME,
+
+        crm_order.CRM_CHILDREN_ID,
+        crm_pack.PACKAGE_NAME,
+        crm_pack."DAY"            AS NUMBER_DAY,
+        dp.PACKAGE_CATEGORY,
+        dp.CATEGORY_NAME,
+        all_code.PACKAGE_ID,
+        crm_pack.PACKAGE_DURATION,
+
+        /*
+          Chuẩn hoá loại gói dựa trên tên gói (PACKAGE_NAME):
+          - Bán mới / Đổi gói / Gia hạn
+        */
+        CASE
+            WHEN dp.PACKAGE_NAME LIKE '%.BM.%'
+              OR dp.PACKAGE_NAME LIKE '%Bán mới%' THEN 'Bán mới'
+            WHEN dp.PACKAGE_NAME LIKE '%Đổi gói%'
+              OR dp.PACKAGE_NAME LIKE '%.DG.%'
+              OR dp.PACKAGE_NAME LIKE '%.ĐG.%' THEN 'Đổi gói'
+            WHEN dp.PACKAGE_NAME LIKE '%Gia hạn%'
+              OR dp.PACKAGE_NAME LIKE '%.GH.%' THEN 'Gia hạn'
+        END AS PACKAGE_TYPE_STD,
+
+        /*
+          rnk: chọn bản ghi mới nhất theo từng (profile_id, package_id)
+          - order by all_code.start_time desc => start_time gần nhất
+        */
+        ROW_NUMBER() OVER(
+            PARTITION BY profile_id, all_code.PACKAGE_ID
+            ORDER BY all_code.start_time DESC
+        ) AS rnk
+
+    FROM EDUCA_K12.K12_PROFILE k12_profile
+
+    /* mapping profile -> active_code */
+    LEFT JOIN ODS_STAGING.EDUCA_CRM_FLAT_CRM_ACTIVE_CODE_EDU_CLASS_NEW active_code
+        ON k12_profile.ID = active_code.K12_ID
+
+    /* active_code -> order */
+    LEFT JOIN EDUCA_CRM.CRM_ORDER crm_order
+        ON active_code.ORDER_ID = crm_order.ID
+
+    /* active_code.code -> account_package (thông tin thời gian start/end + package_id) */
+    JOIN EDUCADB.EDU_ACCOUNT_PACKAGE all_code 
+        ON all_code.CODE = active_code.CODE
+       AND all_code."TYPE" IN (11,12,13)         -- chỉ lấy các type hợp lệ
+
+    /* thông tin gói từ dimension (crm_pack) */
+    LEFT JOIN ODS_DA.BOD_DIM_PACKAGE crm_pack
+        ON crm_order.PACKAGE_ID = crm_pack.ID
+
+    /* join license đã gom để lấy last_end_time */
+    LEFT JOIN LICENSE_AGG license
+        ON k12_profile.ID = license.PROFILE_ID
+
+    /* dimension package (dp) để lấy category/name chuẩn hóa */
+    LEFT JOIN ODS_DA.BOD_DIM_PACKAGE dp
+        ON crm_order.PACKAGE_ID = dp.ID
+
+    WHERE active_code.IS_PAID = 1    -- chỉ lấy code đã thanh toán
+      AND all_code.PACKAGE_ID <> 1   -- loại package_id = 1 (nếu là gói mặc định/test)
+      -- AND k12_profile.ID = 1015138
+
+    ORDER BY package_name
+)
+WHERE rnk = 1   -- chỉ giữ bản ghi mới nhất theo (profile_id, package_id)
+)
+
+/*
+  3) base_1: tạo các metric theo profile
+     - START_TIME_DAU_TIEN: start_time đầu tiên theo order_date
+     - TOTAL_NUMBER_DAY: tổng số ngày mua (sum number_day)
+     - RN: thứ tự order trong profile
+     - TOTAL_ORDER: tổng số order
+     - END_TIME_CUOI_CUNG: last_end_time lớn nhất theo profile (từ license)
+*/
+, base_1 AS (
+    SELECT DISTINCT
+        ac.PROFILE_ID,
+        ac.ORDER_ID,
+        ac.ORDER_DATE,
+        ac.START_TIME,
+        ac.END_TIME,
+        ac.code,
+
+        FIRST_VALUE(ac.START_TIME) OVER (
+            PARTITION BY ac.PROFILE_ID
+            ORDER BY ac.ORDER_DATE
+        ) AS START_TIME_DAU_TIEN,
+
+        SUM(ac.NUMBER_DAY) OVER (
+            PARTITION BY ac.PROFILE_ID
+        ) AS TOTAL_NUMBER_DAY,
+
+        ROW_NUMBER() OVER (
+            PARTITION BY ac.PROFILE_ID
+            ORDER BY ac.ORDER_DATE, ac.ORDER_ID
+        ) AS RN,
+
+        COUNT(*) OVER (
+            PARTITION BY ac.PROFILE_ID
+        ) AS TOTAL_ORDER,
+
+        MAX(ac.LAST_END_TIME) OVER (
+            PARTITION BY ac.PROFILE_ID
+        ) AS END_TIME_CUOI_CUNG,
+
+        ac.NUMBER_DAY,
+        ac.PACKAGE_NAME,
+        ac.PACKAGE_TYPE_STD,
+        ac.PACKAGE_ID,
+        ac.PACKAGE_DURATION
+
+    FROM ac
+    /* có thể filter category nếu cần:
+    WHERE CATEGORY_NAME IN (
+        'Uniclass',
+        'Uniclass English Kid',
+        'Uniclass Literature Kid',
+        'Uniclass Math Kid'
+    )
+    */
+)
+
+/*
+  4) base_2: tính CALC_END_TIME cho từng order theo logic nối tiếp ngày
+     Ý tưởng:
+     - Nếu RN=1: end = start_time + number_day
+     - Nếu order_date <= (end dự kiến của order trước): coi như gia hạn liên tục => end = end_trước + number_day
+     - Nếu order bị đứt quãng: end = start_time + number_day
+*/
+, base_2 AS (
+    SELECT
+        b1.*,
+
+        CASE
+            WHEN b1.RN = 1 THEN
+                b1.START_TIME + b1.NUMBER_DAY
+
+            WHEN b1.ORDER_DATE <=
+                 LAG(b1.START_TIME + b1.NUMBER_DAY) OVER (
+                     PARTITION BY b1.PROFILE_ID
+                     ORDER BY b1.ORDER_DATE, b1.ORDER_ID
+                 )
+            THEN
+                LAG(b1.START_TIME + b1.NUMBER_DAY) OVER (
+                    PARTITION BY b1.PROFILE_ID
+                    ORDER BY b1.ORDER_DATE, b1.ORDER_ID
+                ) + b1.NUMBER_DAY
+
+            ELSE
+                b1.START_TIME + b1.NUMBER_DAY
+        END AS CALC_END_TIME
+    FROM base_1 b1
+)
+
+/*
+  5) Final select:
+     - ACTUAL_END_TIME:
+       + Nếu là order cuối (RN = TOTAL_ORDER): dùng END_TIME_CUOI_CUNG (đồng bộ theo license)
+       + Nếu không: dùng CALC_END_TIME (tính nối tiếp bằng number_day)
+     - NEXT_ORDER_DATE: order_date của đơn kế tiếp (lead)
+     - IS_RENEWAL: có đơn kế tiếp hay không (1/0)
+*/
+SELECT
+    PROFILE_ID,
+    ORDER_ID,
+    ORDER_DATE,
+    START_TIME,
+    END_TIME,
+    code,
+
+    CASE
+        WHEN RN = TOTAL_ORDER THEN END_TIME_CUOI_CUNG
+        ELSE CALC_END_TIME
+    END AS ACTUAL_END_TIME,
+
+    PACKAGE_TYPE_STD,
+    NUMBER_DAY,
+
+    LEAD(ORDER_DATE) OVER (
+        PARTITION BY PROFILE_ID
+        ORDER BY ORDER_DATE, ORDER_ID
+    ) AS NEXT_ORDER_DATE,
+
+    CASE
+        WHEN LEAD(ORDER_DATE) OVER (
+            PARTITION BY PROFILE_ID
+            ORDER BY ORDER_DATE, ORDER_ID
+        ) IS NOT NULL THEN 1
+        ELSE 0
+    END AS IS_RENEWAL,
+
+    RN,
+    PACKAGE_NAME,
+    TOTAL_NUMBER_DAY,
+    PACKAGE_DURATION
+FROM base_2
+ORDER BY ORDER_DATE, ORDER_ID;
