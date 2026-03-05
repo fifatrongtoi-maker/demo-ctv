@@ -1,0 +1,29 @@
+Product_latest =
+VAR Base =
+    SUMMARIZE(
+        Hanh_vi,
+        Hanh_vi[PHONE],
+        "LastOrderDate", MAX(Hanh_vi[ORDER_DATE])
+    )
+RETURN
+ADDCOLUMNS(
+    Base,
+    "LatestProduct",
+        VAR p  = [PHONE]
+        VAR dt = [LastOrderDate]
+        VAR lastRow =
+            TOPN(
+                1,
+                FILTER(
+                    Hanh_vi,
+                    Hanh_vi[PHONE] = p
+                        && Hanh_vi[ORDER_DATE] = dt
+                        && NOT ISBLANK(Hanh_vi[ORDER_DATE])
+                ),
+                Hanh_vi[ORDER_DATE], DESC
+                -- thêm tie-break nếu có:
+                -- , Hanh_vi[ORDER_ID], DESC
+            )
+        RETURN
+            MAXX(lastRow, Hanh_vi[PRODUCT])
+)
